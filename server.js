@@ -1,79 +1,92 @@
-// server.js
-const express = require('express');
-const axios = require('axios');
-const path = require('path');
-const bodyParser = require('body-parser');
-const helmet = require('helmet');
-const cors = require('cors');
+const express = require("express");
+const fetch = require("node-fetch");
+const path = require("path");
 
 const app = express();
-app.use(helmet());
-app.use(cors());
-app.use(bodyParser.json());
+const PORT = process.env.PORT || 3000;
 
-// Serve static frontend
-app.use('/', express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
-// Replace with your repo info
-const GITHUB_REPO = "QadeerXTech/QADEER-AI"; 
-const REPO_BRANCH = "main"; 
+// Render repo info
+const GITHUB_REPO = "qadeerTech/QADEER-AI";   // <-- apna repo name daalo
+const REPO_BRANCH = "main";                   // <-- agar branch ka naam main hai
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
 // Deploy API
-app.post('/api/deploy', async (req, res) => {
+app.post("/api/deploy", async (req, res) => {
   try {
     const { sessionId, friendlyName } = req.body;
 
-    if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 10) {
-      return res.status(400).json({ success: false, message: "Invalid sessionId" });
+    if (!sessionId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Session ID required" });
     }
 
     const renderApiKey = process.env.RENDER_API_KEY;
     if (!renderApiKey) {
-      return res.status(500).json({ success: false, message: "Render API key not set on server." });
+      return res
+        .status(500)
+        .json({ success: false, message: "Render API key not set on server." });
     }
 
-    const serviceName = (friendlyName && friendlyName.trim())
-      ? `qadeer-ai-${friendlyName.trim().replace(/[^a-z0-9-]/gi, '-').toLowerCase()}`
-      : `qadeer-ai-${Date.now()}`;
+    // Service name
+    const serviceName =
+      (friendlyName &&
+        friendlyName.trim().replace(/[^a-z0-9\-_.]/gi, "-").toLowerCase()) ||
+      "qadeer-ai-" + Date.now();
 
+    // Body for render
     const body = {
-      name: serviceName,
-      env: "node",
-      repo: {
-        type: "github",
-        name: GITHUB_REPO
-      },
+      serviceName,
+      runtime: "node",
+      type: "web_service",
+      repo: GITHUB_REPO,
       branch: REPO_BRANCH,
-      plan: "free",
       envVars: [
         { key: "SESSION_ID", value: sessionId },
-        { key: "BOT_NAME", value: "QADEER-AI" }
+        { key: "BOT_NAME", value: "QADEER-AI" },
       ],
-      startCommand: "node write-session-from-env.js"
+      startCommand: "node write-session-from-env.js",
     };
 
-    const url = "https://api.render.com/v1/services";
-
-    const response = await axios.post(url, body, {
+    const response = await fetch("https://api.render.com/v1/services", {
+      method: "POST",
       headers: {
         "Authorization": `Bearer ${renderApiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      timeout: 60000
+      body: JSON.stringify(body),
+      timeout: 60000,
     });
 
-    return res.json({ success: true, data: response.data, message: "Deploy created. It may take a few minutes to build." });
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(500).json({
+        success: false,
+        message: "Deploy failed",
+        error: data,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Deploy created. It may take a minute to start.",
+      data,
+    });
   } catch (err) {
-    console.error("deploy error:", err.response ? err.response.data || err.response.statusText : err.message);
-    const msg = err.response && err.response.data ? err.response.data : err.message;
-    return res.status(500).json({ success: false, message: "Deployment failed", error: msg });
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`QADEER Deploy Panel running on ${PORT}`));
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
